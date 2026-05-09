@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Editor caches
+.vscode/
+.idea/
+
+# Local notes / scratch — anything in scratch/ stays local
+scratch/
+
+# Never commit credentials. The PCO Personal Access Token lives in
+# Apps Script PropertiesService, not in this repo. If you ever paste
+# real credentials into a local file for testing, name it `.secrets`
+# or `.local` so this rule catches it.
+*.secrets
+*.local
+.env
+.env.*

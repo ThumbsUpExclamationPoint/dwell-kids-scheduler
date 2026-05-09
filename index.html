@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- noindex/nofollow keeps this off Google. The link is still           -->
+  <!-- shareable; we just don't want randoms finding it via search.        -->
+  <meta name="robots" content="noindex, nofollow">
+  <title>Dwell Kids — Builder schedule</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="assets/dwell-icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: #1f2937;
+      background: #ffffff;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #00cccc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 80px; }
+
+    /* -------- Brand header (matches Interview Hub) -------- */
+    .brand {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      gap: 4px; margin: 8px 0 28px;
+    }
+    .brand-icon { width: 96px; height: 96px; object-fit: contain; display: block; }
+    .brand-wordmark {
+      font-size: 38px; font-weight: 300; letter-spacing: 0.18em;
+      color: #111827; margin-top: 4px; padding-left: 0.18em;
+    }
+    .brand-tag {
+      font-family: "Permanent Marker", "Marker Felt", cursive;
+      font-size: 22px; color: #00cccc; letter-spacing: 0.04em; margin-top: -2px;
+    }
+    header h1 {
+      font-size: 24px; font-weight: 500; margin: 0 0 6px;
+      letter-spacing: -0.01em; text-align: center; color: #1f2937;
+    }
+    header .subtitle { color: #6b7280; margin: 0 0 24px; font-size: 15px; text-align: center; }
+
+    /* -------- Step cards -------- */
+    .step {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+      padding: 22px 24px; margin-bottom: 16px;
+    }
+    .step h2 { font-size: 17px; font-weight: 600; margin: 0 0 4px; color: #111827; }
+    .step .step-help { color: #6b7280; font-size: 14px; margin: 0 0 16px; }
+    .step.locked { opacity: 0.5; pointer-events: none; }
+
+    /* -------- Team picker -------- */
+    .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .team-btn {
+      padding: 18px 16px; border: 1px solid #d1d5db; border-radius: 10px;
+      background: #fff; color: #1f2937; font-size: 16px; font-weight: 500;
+      cursor: pointer; text-align: center; transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .team-btn:hover { border-color: #00cccc; background: #f0fdfd; }
+    .team-btn.active {
+      border-color: #00cccc; background: #00cccc; color: #fff;
+    }
+    .team-btn .age { display: block; font-size: 12px; color: #6b7280; margin-top: 4px; font-weight: 400; }
+    .team-btn.active .age { color: rgba(255,255,255,0.85); }
+
+    /* -------- "I'm…" picker -------- */
+    .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+    .form-row label { font-size: 13px; font-weight: 500; color: #374151; }
+    .form-row select, .form-row input {
+      padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 15px; font-family: inherit; background: #fff;
+    }
+    .form-row select:focus, .form-row input:focus {
+      outline: none; border-color: #00cccc; box-shadow: 0 0 0 3px rgba(0,204,204,0.15);
+    }
+
+    /* -------- Sunday cards -------- */
+    .sundays { display: flex; flex-direction: column; gap: 12px; }
+    .sunday {
+      border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px;
+      background: #fff;
+    }
+    .sunday.no-plan { background: #f9fafb; }
+    .sunday-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .sunday-date {
+      font-size: 15px; font-weight: 600; color: #111827;
+    }
+    .sunday-note {
+      font-size: 12px; color: #9ca3af;
+    }
+    .sunday-roles {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .role-cell {
+      flex: 1 1 160px; min-width: 0;
+      padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px;
+      background: #fff; text-align: left;
+      font-size: 14px; font-family: inherit;
+      cursor: pointer; transition: all 0.15s ease;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .role-cell .role-name {
+      font-size: 11px; font-weight: 600; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .role-cell .role-state { font-size: 14px; color: #1f2937; }
+    .role-cell.open:hover {
+      border-color: #00cccc; background: #f0fdfd;
+    }
+    .role-cell.filled {
+      cursor: default;
+    }
+    .role-cell.filled .role-state { color: #6b7280; }
+    .role-cell.you {
+      border-color: #00cccc; background: #f0fdfd;
+    }
+    .role-cell.you .role-state { color: #115e59; font-weight: 500; }
+    .role-cell.no-plan {
+      cursor: not-allowed; background: #f3f4f6; color: #9ca3af;
+    }
+    .role-cell.no-plan .role-state { color: #9ca3af; font-style: italic; }
+    .role-cell.busy {
+      pointer-events: none; opacity: 0.6;
+    }
+
+    /* -------- Status / toast -------- */
+    .toast {
+      position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+      background: #1f2937; color: #fff; padding: 10px 16px; border-radius: 8px;
+      font-size: 14px; max-width: 90vw; box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+      opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; }
+    .toast.success { background: #15803d; }
+    .toast.error { background: #b91c1c; }
+
+    .status-line { font-size: 13px; color: #6b7280; padding: 12px 0; text-align: center; }
+    .status-line.error { color: #b91c1c; }
+
+    footer {
+      text-align: center; color: #9ca3af; font-size: 13px;
+      margin-top: 48px; padding-top: 24px; border-top: 1px solid #e5e7eb;
+    }
+  </style>
+</head>
+<body>
+
+  <main class="wrap">
+    <header>
+      <div class="brand">
+        <img class="brand-icon" src="assets/dwell-icon.png" alt="Dwell Church">
+        <div class="brand-wordmark">dwell</div>
+        <div class="brand-tag">KIDS</div>
+      </div>
+      <h1>Builder schedule</h1>
+      <p class="subtitle">Pick a Sunday and a role. We'll add you to Planning Center automatically.</p>
+    </header>
+
+    <!-- Step 1: pick a team -->
+    <section class="step" id="step-team">
+      <h2>1. Which team?</h2>
+      <p class="step-help">Pick the team you serve on. If you serve on both, claim a slot on each.</p>
+      <div class="teams" id="team-list">
+        <button type="button" class="team-btn" data-team="toddlers">
+          Toddlers
+          <span class="age">walking through age 2</span>
+        </button>
+        <button type="button" class="team-btn" data-team="elementary">
+          Elementary
+          <span class="age">K through 5th grade</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Step 2: identify yourself + see the schedule -->
+    <section class="step locked" id="step-board">
+      <h2>2. Pick a Sunday</h2>
+      <p class="step-help">Choose your name, then click an open role on any Sunday below.</p>
+
+      <div class="form-row">
+        <label for="f-builder">I'm&hellip;</label>
+        <select id="f-builder" disabled>
+          <option value="">— pick your name —</option>
+        </select>
+      </div>
+
+      <div id="board"><div class="status-line">Pick a team to see the schedule.</div></div>
+    </section>
+
+    <footer>
+      Dwell Church of the Peninsula &middot; kids builder scheduler
+      &middot; <a href="#" id="reset-link">start over</a>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </main>
+
+<script>
+/* =====================================================================
+ * CONFIG — fill in APPS_SCRIPT_URL after deploying Code.gs (DEPLOY.md
+ * walks through it). Until set, the page renders but every fetch
+ * fails with a clear error visible to the user.
+ * ===================================================================== */
+const CONFIG = {
+  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbw3TNhTBLJZCKDfmJKhprbkCUDMAlAqG2HQX8PUuCKTxtaXNNWlWxJbr4Xqcg9qFKZpoQ/exec",
+};
+
+/* =====================================================================
+ * State
+ * ===================================================================== */
+let selectedTeam = null;     // 'toddlers' | 'elementary'
+let selectedBuilder = null;  // { id, name } from the roster
+let board = null;            // last fetched board response from Apps Script
+
+/* =====================================================================
+ * Wire up the team buttons (only thing visible at page load)
+ * ===================================================================== */
+document.querySelectorAll('.team-btn').forEach(btn => {
+  btn.addEventListener('click', () => selectTeam(btn.dataset.team));
+});
+
+document.getElementById('f-builder').addEventListener('change', (ev) => {
+  const opt = ev.target.selectedOptions[0];
+  selectedBuilder = (opt && opt.value)
+    ? { id: opt.value, name: opt.textContent }
+    : null;
+  // Re-render so cells the user already holds flip to "You — confirmed"
+  // and our highlighting stays accurate.
+  if (board && board.sundays) renderSundays(board.sundays);
+});
+
+document.getElementById('reset-link').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  window.location.reload();
+});
+
+/* =====================================================================
+ * Step 1 → 2: team selection loads the board
+ * ===================================================================== */
+async function selectTeam(team) {
+  selectedTeam = team;
+  selectedBuilder = null;
+
+  // Highlight the chosen team button, unlock step 2
+  document.querySelectorAll('.team-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.team === team);
+  });
+  document.getElementById('step-board').classList.remove('locked');
+
+  // Reset roster + board UI
+  const sel = document.getElementById('f-builder');
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">— loading roster —</option>';
+
+  const boardEl = document.getElementById('board');
+  boardEl.innerHTML = '<div class="status-line">Loading schedule…</div>';
+
+  await loadBoard();
+
+  // Bring step 2 into view on mobile
+  document.getElementById('step-board').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* =====================================================================
+ * Fetch + render the board (roster + 8 Sundays + assignments)
+ * ===================================================================== */
+async function loadBoard() {
+  if (CONFIG.APPS_SCRIPT_URL.startsWith('REPLACE_ME')) {
+    showFatalError("Backend not configured yet — Matt needs to finish deploying. (See DEPLOY.md.)");
+    return;
+  }
+
+  try {
+    const url = CONFIG.APPS_SCRIPT_URL +
+      '?action=board&team=' + encodeURIComponent(selectedTeam);
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'unknown error');
+    board = data;
+    renderRoster(data.roster || []);
+    renderSundays(data.sundays || []);
+  } catch (err) {
+    showFatalError("Couldn't load the schedule: " + (err.message || err));
+  }
+}
+
+function renderRoster(roster) {
+  const sel = document.getElementById('f-builder');
+  sel.innerHTML = '<option value="">— pick your name —</option>';
+  // Sort alphabetically by first name; that's how PCO usually orders them
+  // and is what builders will scan visually.
+  roster
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+  sel.disabled = roster.length === 0;
+  if (roster.length === 0) {
+    sel.innerHTML = '<option value="">(no builders found on this team in PCO)</option>';
+  }
+}
+
+function renderSundays(sundays) {
+  const boardEl = document.getElementById('board');
+  if (sundays.length === 0) {
+    boardEl.innerHTML = '<div class="status-line">No upcoming Sundays found. (If this looks wrong, ping Matt — Plans may not be created yet.)</div>';
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sundays';
+
+  sundays.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'sunday' + (s.plan_id ? '' : ' no-plan');
+
+    const head = document.createElement('div');
+    head.className = 'sunday-head';
+
+    const date = document.createElement('div');
+    date.className = 'sunday-date';
+    date.textContent = formatSundayDate(s.date);
+    head.appendChild(date);
+
+    if (!s.plan_id) {
+      const note = document.createElement('div');
+      note.className = 'sunday-note';
+      note.textContent = 'schedule not yet published';
+      head.appendChild(note);
+    }
+
+    card.appendChild(head);
+
+    const roles = document.createElement('div');
+    roles.className = 'sunday-roles';
+
+    // Iterate in the canonical position order returned by the backend
+    // so the UI is consistent across teams.
+    Object.keys(s.slots).forEach(positionName => {
+      const slot = s.slots[positionName];
+      const cell = document.createElement('div');
+      cell.dataset.planId  = s.plan_id || '';
+      cell.dataset.position = positionName;
+
+      const label = document.createElement('div');
+      label.className = 'role-name';
+      label.textContent = positionName;
+      cell.appendChild(label);
+
+      const state = document.createElement('div');
+      state.className = 'role-state';
+
+      if (!s.plan_id) {
+        cell.className = 'role-cell no-plan';
+        state.textContent = 'unavailable';
+      } else if (slot.filled_by) {
+        cell.className = 'role-cell filled';
+        const youAreThem = selectedBuilder && slot.filled_by.id === selectedBuilder.id;
+        if (youAreThem) cell.classList.add('you');
+        state.textContent = youAreThem
+          ? 'You — confirmed'
+          : slot.filled_by.short_name;
+      } else {
+        cell.className = 'role-cell open';
+        state.textContent = 'Open — tap to claim';
+        cell.addEventListener('click', () => claimSlot(s, positionName, cell));
+      }
+
+      cell.appendChild(state);
+      roles.appendChild(cell);
+    });
+
+    card.appendChild(roles);
+    wrap.appendChild(card);
+  });
+
+  boardEl.innerHTML = '';
+  boardEl.appendChild(wrap);
+}
+
+/* =====================================================================
+ * Claim a slot
+ * ===================================================================== */
+async function claimSlot(sunday, positionName, cellEl) {
+  if (!selectedBuilder) {
+    showToast("Pick your name from the dropdown first.", 'error');
+    document.getElementById('f-builder').focus();
+    return;
+  }
+  if (!sunday.plan_id) {
+    // Should not be possible — no-plan cells aren't clickable — but
+    // belt-and-suspenders.
+    showToast("That Sunday isn't published yet.", 'error');
+    return;
+  }
+
+  // Optimistic UI: mark the cell busy
+  cellEl.classList.add('busy');
+  const stateEl = cellEl.querySelector('.role-state');
+  const prev = stateEl.textContent;
+  stateEl.textContent = 'Saving…';
+
+  // multipart/form-data is CORS-safelisted, so the POST goes out
+  // without preflight. We use no-cors mode because Apps Script doesn't
+  // return CORS headers; tradeoff is we can't read the response body.
+  // We confirm by re-fetching the board and checking the cell flipped.
+  const fd = new FormData();
+  fd.append('action', 'claim');
+  fd.append('team', selectedTeam);
+  fd.append('plan_id', sunday.plan_id);
+  fd.append('position', positionName);
+  fd.append('person_id', selectedBuilder.id);
+
+  try {
+    await fetch(CONFIG.APPS_SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: fd });
+
+    // Wait a beat for PCO to settle (write-then-read consistency on
+    // PCO's side is usually fast but not instantaneous).
+    await new Promise(r => setTimeout(r, 800));
+    await loadBoard();
+
+    // Did it stick? Look up the cell again.
+    const stillOpen = (board.sundays || []).some(s =>
+      s.plan_id === sunday.plan_id &&
+      !s.slots[positionName].filled_by
+    );
+    if (stillOpen) {
+      showToast("Couldn't claim that slot — it may have just been taken or PCO rejected it. Try another.", 'error');
+    } else {
+      showToast("You're confirmed for " + formatSundayDate(sunday.date) + " — " + positionName + ".", 'success');
+    }
+  } catch (err) {
+    cellEl.classList.remove('busy');
+    stateEl.textContent = prev;
+    showToast("Network error — check your connection and try again.", 'error');
+  }
+}
+
+/* =====================================================================
+ * Helpers
+ * ===================================================================== */
+function formatSundayDate(iso) {
+  // Backend returns YYYY-MM-DD. Render as "Sunday, June 14".
+  // Note: parsing as local date avoids the "off-by-one" UTC trap.
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric'
+  });
+}
+
+let toastTimer = null;
+function showToast(text, kind) {
+  const el = document.getElementById('toast');
+  el.className = 'toast show ' + (kind || '');
+  el.textContent = text;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, 4500);
+}
+
+function showFatalError(msg) {
+  const boardEl = document.getElementById('board');
+  boardEl.innerHTML = '<div class="status-line error">' + escapeHtml(msg) + '</div>';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
+}
+</script>
+</body>
+</html>
