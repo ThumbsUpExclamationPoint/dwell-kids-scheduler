@@ -86,8 +86,11 @@ const PCO_BASE = 'https://api.planningcenteronline.com/services/v2';
 function doGet(e) {
   try {
     const p = (e && e.parameter) || {};
-    if (p.action === 'ping')  return jsonResponse({ ok: true, msg: 'kids scheduler alive' });
-    if (p.action === 'board') return jsonResponse(handleBoard(p.team));
+    if (p.action === 'ping')      return jsonResponse({ ok: true, msg: 'kids scheduler alive' });
+    if (p.action === 'board')     return jsonResponse(handleBoard(p.team));
+    if (p.action === 'dashboard') return jsonResponse(handleDashboard());
+    if (p.action === 'extendNow') { requireDigestToken(p); return jsonResponse(extendPlans()); }
+    if (p.action === 'runDigest') { requireDigestToken(p); return jsonResponse(tuesdayDigest()); }
     return textResponse('Dwell Kids Scheduler — alive.\nTry ?action=board&team=toddlers');
   } catch (err) {
     console.error(err);
@@ -481,4 +484,518 @@ function jsonResponse(obj) {
 
 function textResponse(msg) {
   return ContentService.createTextOutput(msg).setMimeType(ContentService.MimeType.TEXT);
+}
+
+// =====================================================================
+// Dashboard
+// =====================================================================
+//
+// The dashboard reuses handleBoard() for each team and stitches the
+// results together. This guarantees the dashboard and the scheduler
+// page can never disagree about who's filled — they read from the same
+// PCO state through the same code path.
+//
+// Returns:
+//   {
+//     ok: true,
+//     generated_at: 'YYYY-MM-DDTHH:mm:ssZ',
+//     teams: {
+//       toddlers:   { roster, sundays },     // shape from handleBoard
+//       elementary: { roster, sundays },
+//     },
+//   }
+// =====================================================================
+
+function handleDashboard() {
+  const out = { ok: true, generated_at: new Date().toISOString(), teams: {} };
+  Object.keys(SERVICE_TYPES).forEach(key => {
+    const b = handleBoard(key);
+    if (b && b.ok) {
+      out.teams[key] = { roster: b.roster, sundays: b.sundays };
+    } else {
+      out.teams[key] = { error: (b && b.error) || 'unknown', roster: [], sundays: [] };
+    }
+  });
+  return out;
+}
+
+// =====================================================================
+// Plan Extender
+// =====================================================================
+//
+// Ensures a PCO Plan exists for each of the next N Sundays for each
+// Service Type. For any Sunday that's missing, creates a new Plan
+// cloned from the most recent existing Plan in that Service Type.
+//
+// "Clone" here means:
+//   - Inherit `title` and `series_title` from the template.
+//   - Copy over `needed_positions` (headcount per team_position) so
+//     PCO's "needs" view shows the right counts on the new plan.
+//   - Do NOT copy plan_people (volunteer assignments) — each new
+//     Sunday starts empty so volunteers can self-schedule via the
+//     scheduler page.
+//   - Do NOT copy plan_times — Apps Script can't reliably set times
+//     across timezones in one shot; PCO's defaults will apply.
+//
+// Idempotent: re-running won't create duplicates. Safe to invoke from
+// the Tuesday job, from the Apps Script editor, or from a manual URL
+// trigger.
+// =====================================================================
+
+const EXTENDER_HORIZON_SUNDAYS = 8;
+
+function extendPlans() {
+  const summary = { ok: true, ran_at: new Date().toISOString(), created: [], skipped: [], errors: [] };
+
+  const targetSundays = computeUpcomingSundays(EXTENDER_HORIZON_SUNDAYS);
+
+  Object.keys(SERVICE_TYPES).forEach(teamKey => {
+    const stId = SERVICE_TYPES[teamKey];
+    try {
+      // 1. Map of existing future plans by sort_date ('YYYY-MM-DD').
+      const futureRes = pcoGet(
+        '/service_types/' + stId + '/plans?filter=future&order=sort_date&per_page=' + (EXTENDER_HORIZON_SUNDAYS + 4)
+      );
+      const existingDates = {};
+      (futureRes.data || []).forEach(p => {
+        const sd = p.attributes && p.attributes.sort_date;
+        if (sd) existingDates[sd.substring(0, 10)] = p.id;
+      });
+
+      // 2. Template plan = most recent past plan in this service type.
+      //    Falls back to the earliest future plan if no past plan exists
+      //    (cold-start case — fresh service type).
+      const template = getTemplatePlan(stId);
+      const templatePositions = template
+        ? getNeededPositions(stId, template.id)
+        : [];
+
+      // 3. For each target Sunday: create if missing.
+      targetSundays.forEach(date => {
+        if (existingDates[date]) {
+          summary.skipped.push({ team: teamKey, date: date, plan_id: existingDates[date] });
+          return;
+        }
+        try {
+          const created = createPlanForDate(stId, date, template);
+          if (templatePositions.length > 0) {
+            copyNeededPositions(stId, created.id, templatePositions);
+          }
+          summary.created.push({
+            team: teamKey,
+            date: date,
+            plan_id: created.id,
+            positions_copied: templatePositions.length,
+          });
+        } catch (err) {
+          summary.errors.push({
+            team: teamKey,
+            date: date,
+            error: String(err && err.message || err),
+          });
+        }
+      });
+    } catch (err) {
+      summary.errors.push({ team: teamKey, error: String(err && err.message || err) });
+    }
+  });
+
+  if (summary.errors.length > 0) summary.ok = false;
+  return summary;
+}
+
+/**
+ * Find a Plan to use as the cloning template for a given Service Type.
+ * Prefers the most recent past plan; falls back to the earliest future
+ * plan if there's no history yet.
+ */
+function getTemplatePlan(stId) {
+  // Most recent past plan, descending so first row is freshest.
+  const past = pcoGet(
+    '/service_types/' + stId + '/plans?filter=past&order=-sort_date&per_page=3'
+  );
+  if (past.data && past.data.length > 0) {
+    return past.data[0];
+  }
+  const future = pcoGet(
+    '/service_types/' + stId + '/plans?filter=future&order=sort_date&per_page=1'
+  );
+  if (future.data && future.data.length > 0) {
+    return future.data[0];
+  }
+  return null;
+}
+
+/**
+ * Get the needed_positions for a plan as raw PCO records. Caller will
+ * re-POST these against a new plan with copyNeededPositions().
+ */
+function getNeededPositions(stId, planId) {
+  const res = pcoGet(
+    '/service_types/' + stId + '/plans/' + planId + '/needed_positions?per_page=100'
+  );
+  return res.data || [];
+}
+
+/**
+ * Create a new Plan inside the given Service Type for a given Sunday.
+ *
+ * PCO API gotcha: `sort_date` and `dates` are read-only / computed —
+ * passing them on create returns 422 "Forbidden Attribute". The actual
+ * way to date a new plan is to first create the plan empty, then add
+ * one or more `plan_times` whose starts_at falls on the target Sunday.
+ * PCO derives sort_date from the earliest plan_time.
+ *
+ * So this function does two writes:
+ *   1. POST /plans              — empty plan (title/series cloned)
+ *   2. POST /plan_times (per template time) — shifted to target Sunday
+ *
+ * If the template has no plan_times (cold-start), we add a single
+ * default Sunday-morning service time so the plan still has a date.
+ */
+function createPlanForDate(stId, dateYmd, template) {
+  // ----- Step 1: create the plan (no date attrs) -----
+  const attrs = {};
+  if (template && template.attributes) {
+    if (template.attributes.title)        attrs.title        = template.attributes.title;
+    if (template.attributes.series_title) attrs.series_title = template.attributes.series_title;
+  }
+  const res = pcoPost(
+    '/service_types/' + stId + '/plans',
+    { data: { type: 'Plan', attributes: attrs } }
+  );
+  if (!res || !res.data || !res.data.id) {
+    throw new Error('PCO create-plan returned no id');
+  }
+  const newPlanId = res.data.id;
+
+  // ----- Step 2: add plan_times on the target Sunday -----
+  // Pull the template plan's plan_times and emit a new plan_time per
+  // template entry shifted to the target Sunday, preserving time-of-day
+  // and timezone offset. Worst case (template has no times), we add
+  // a single Sunday 10:00 PT service time as a sensible default — Matt
+  // can edit the time in PCO later if needed.
+  let addedAny = false;
+  if (template && template.id) {
+    const templateTimes = getPlanTimes(stId, template.id);
+    templateTimes.forEach(pt => {
+      const a = pt.attributes || {};
+      const startsAt = shiftTimestampToDate(a.starts_at, dateYmd);
+      const endsAt   = a.ends_at ? shiftTimestampToDate(a.ends_at, dateYmd) : null;
+      const timeType = a.time_type || 'service';
+      try {
+        addPlanTime(stId, newPlanId, startsAt, endsAt, timeType);
+        addedAny = true;
+      } catch (err) {
+        console.warn('createPlanForDate: skipped a plan_time clone — ' + (err && err.message || err));
+      }
+    });
+  }
+  if (!addedAny) {
+    // Cold-start / no-template fallback: 10:00–11:30 Sunday morning PT.
+    // ISO with explicit -08:00 offset; PCO normalizes to UTC server-side.
+    // PT switches between -08 (PST) and -07 (PDT), but PCO doesn't care
+    // about our local DST — it stores absolute UTC and renders local in
+    // the UI based on the user's timezone.
+    try {
+      addPlanTime(
+        stId,
+        newPlanId,
+        dateYmd + 'T10:00:00-08:00',
+        dateYmd + 'T11:30:00-08:00',
+        'service'
+      );
+    } catch (err) {
+      console.warn('createPlanForDate: cold-start plan_time also failed — ' + (err && err.message || err));
+    }
+  }
+
+  return { id: newPlanId, attributes: res.data.attributes };
+}
+
+/**
+ * List plan_times on a plan. Used by createPlanForDate to clone the
+ * template's service-time pattern onto a new Sunday.
+ */
+function getPlanTimes(stId, planId) {
+  const res = pcoGet(
+    '/service_types/' + stId + '/plans/' + planId + '/plan_times?per_page=20'
+  );
+  return res.data || [];
+}
+
+/**
+ * Create one plan_time on the given plan. starts_at is required;
+ * ends_at is optional (PCO will compute a default if omitted).
+ * time_type is one of: 'service' | 'rehearsal' | 'other'.
+ */
+function addPlanTime(stId, planId, startsAt, endsAt, timeType) {
+  const attrs = {
+    starts_at: startsAt,
+    time_type: timeType || 'service',
+  };
+  if (endsAt) attrs.ends_at = endsAt;
+  return pcoPost(
+    '/service_types/' + stId + '/plans/' + planId + '/plan_times',
+    { data: { type: 'PlanTime', attributes: attrs } }
+  );
+}
+
+/**
+ * Replace the date portion of an ISO timestamp with a new YYYY-MM-DD,
+ * preserving the time-of-day and timezone offset. Used to take a
+ * template plan_time like '2025-09-07T17:00:00Z' and produce a new one
+ * on the target Sunday like '2026-06-28T17:00:00Z' — same wall-clock
+ * service start, just on a different week.
+ *
+ * If parsing fails for any reason, falls back to 10:00 PT on the
+ * target date so we never emit garbage.
+ */
+function shiftTimestampToDate(isoTs, targetYmd) {
+  const fallback = targetYmd + 'T10:00:00-08:00';
+  if (!isoTs) return fallback;
+  const m = String(isoTs).match(/^\d{4}-\d{2}-\d{2}T(.+)$/);
+  if (!m) return fallback;
+  return targetYmd + 'T' + m[1];
+}
+
+/**
+ * Copy each needed_position from the template into the new plan. We
+ * POST one at a time — PCO doesn't support bulk create here. Errors
+ * on individual positions are swallowed (logged) so one bad position
+ * doesn't block the rest; the plan itself is the important thing.
+ */
+function copyNeededPositions(stId, newPlanId, sourcePositions) {
+  sourcePositions.forEach(np => {
+    try {
+      const teamRel = np.relationships && np.relationships.team && np.relationships.team.data;
+      if (!teamRel) return;
+      const body = {
+        data: {
+          type: 'NeededPosition',
+          attributes: {
+            quantity: (np.attributes && np.attributes.quantity) || 1,
+            team_position_name: np.attributes && np.attributes.team_position_name,
+          },
+          relationships: {
+            team: { data: { type: 'Team', id: teamRel.id } },
+          },
+        },
+      };
+      pcoPost(
+        '/service_types/' + stId + '/plans/' + newPlanId + '/needed_positions',
+        body
+      );
+    } catch (err) {
+      console.warn('copyNeededPositions: skipped one — ' + (err && err.message || err));
+    }
+  });
+}
+
+// =====================================================================
+// Tuesday Digest
+// =====================================================================
+//
+// Runs the extender, fetches the resulting dashboard state, and emails
+// a fill-status digest to Matt. The email shows every upcoming Sunday
+// per team, every scheduler role per Sunday, and who (if anyone) is in
+// each slot.
+//
+// Triggered by the Cowork scheduled task at Tuesday 12:00 PT via the
+// runDigest URL (see DEPLOY.md). Also callable manually from the Apps
+// Script editor by running this function with no arguments.
+// =====================================================================
+
+const DIGEST_RECIPIENT = 'matt@dwellpeninsula.com';
+
+function tuesdayDigest() {
+  const extendResult = extendPlans();
+  const dashboard    = handleDashboard();
+  const html = buildDigestHtml(dashboard, extendResult);
+
+  const tz = 'America/Los_Angeles';
+  const stamp = Utilities.formatDate(new Date(), tz, 'EEEE, MMM d');
+  const subject = 'Dwell Kids fill status — ' + stamp;
+
+  MailApp.sendEmail({
+    to: DIGEST_RECIPIENT,
+    subject: subject,
+    htmlBody: html,
+    name: 'Dwell Kids Scheduler',
+  });
+
+  return {
+    ok: true,
+    sent_to: DIGEST_RECIPIENT,
+    extend: extendResult,
+  };
+}
+
+/**
+ * Build the HTML body for the digest email. Keep this inline-styled
+ * (Gmail strips <style> tags) and avoid external resources so it
+ * renders the same in any mail client.
+ */
+function buildDigestHtml(dashboard, extendResult) {
+  const css = {
+    body:   'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif;color:#1f2937;max-width:680px;margin:0 auto;padding:16px;',
+    h1:     'font-size:20px;font-weight:600;margin:0 0 4px;color:#111827;',
+    sub:    'font-size:13px;color:#6b7280;margin:0 0 24px;',
+    teamH:  'font-size:16px;font-weight:600;margin:24px 0 8px;color:#111827;border-bottom:2px solid #00cccc;padding-bottom:4px;',
+    table:  'width:100%;border-collapse:collapse;font-size:13px;',
+    th:     'text-align:left;padding:8px 10px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;',
+    td:     'padding:8px 10px;border-bottom:1px solid #f3f4f6;vertical-align:top;',
+    dateTd: 'padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:500;color:#111827;white-space:nowrap;',
+    filled: 'color:#15803d;',
+    empty:  'color:#b91c1c;font-weight:500;',
+    noplan: 'color:#9ca3af;font-style:italic;',
+    foot:   'font-size:12px;color:#9ca3af;margin-top:24px;border-top:1px solid #e5e7eb;padding-top:12px;',
+    pill:   'display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500;',
+    pillOk: 'background:#dcfce7;color:#15803d;',
+    pillNo: 'background:#fee2e2;color:#b91c1c;',
+  };
+
+  const teamLabels = { toddlers: 'Toddlers', elementary: 'Elementary' };
+
+  let html = '<div style="' + css.body + '">';
+  html += '<h1 style="' + css.h1 + '">Dwell Kids — fill status</h1>';
+  html += '<p style="' + css.sub + '">Generated ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }) + ' PT.</p>';
+
+  // Extender summary banner
+  const createdCount = (extendResult && extendResult.created || []).length;
+  const errorCount   = (extendResult && extendResult.errors  || []).length;
+  if (createdCount > 0 || errorCount > 0) {
+    let banner = '<div style="background:#f0fdfd;border:1px solid #00cccc;border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:13px;">';
+    if (createdCount > 0) banner += '<strong>+' + createdCount + ' new plan' + (createdCount === 1 ? '' : 's') + ' created</strong> by the extender.<br>';
+    if (errorCount > 0)   banner += '<span style="color:#b91c1c"><strong>' + errorCount + ' error' + (errorCount === 1 ? '' : 's') + '</strong> while extending — check Apps Script logs.</span>';
+    banner += '</div>';
+    html += banner;
+  }
+
+  Object.keys(dashboard.teams || {}).forEach(teamKey => {
+    const team = dashboard.teams[teamKey];
+    const label = teamLabels[teamKey] || teamKey;
+    html += '<h2 style="' + css.teamH + '">' + escapeForHtml(label) + '</h2>';
+
+    if (team.error) {
+      html += '<p style="' + css.empty + '">Couldn\'t load: ' + escapeForHtml(team.error) + '</p>';
+      return;
+    }
+
+    const sundays = team.sundays || [];
+    if (sundays.length === 0) {
+      html += '<p style="' + css.noplan + '">No upcoming Sundays found.</p>';
+      return;
+    }
+
+    // Discover role columns from the first Sunday (all rows have same keys)
+    const roleNames = Object.keys(sundays[0].slots || {});
+
+    html += '<table style="' + css.table + '">';
+    html += '<thead><tr><th style="' + css.th + '">Sunday</th>';
+    roleNames.forEach(rn => { html += '<th style="' + css.th + '">' + escapeForHtml(rn) + '</th>'; });
+    html += '</tr></thead><tbody>';
+
+    sundays.forEach(s => {
+      html += '<tr>';
+      html += '<td style="' + css.dateTd + '">' + formatDigestDate(s.date) + '</td>';
+      roleNames.forEach(rn => {
+        const slot = (s.slots || {})[rn] || {};
+        let cell;
+        if (!s.plan_id) {
+          cell = '<span style="' + css.noplan + '">no plan</span>';
+        } else if (slot.filled_by) {
+          cell = '<span style="' + css.filled + '">' + escapeForHtml(slot.filled_by.short_name) + '</span>';
+        } else {
+          cell = '<span style="' + css.pill + ' ' + css.pillNo + '">unfilled</span>';
+        }
+        html += '<td style="' + css.td + '">' + cell + '</td>';
+      });
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+
+    // Per-team fill summary
+    const totalCells = sundays.reduce((acc, s) => acc + (s.plan_id ? roleNames.length : 0), 0);
+    const filledCells = sundays.reduce((acc, s) => {
+      if (!s.plan_id) return acc;
+      return acc + roleNames.reduce((a, rn) => a + ((s.slots[rn] && s.slots[rn].filled_by) ? 1 : 0), 0);
+    }, 0);
+    if (totalCells > 0) {
+      const pct = Math.round(100 * filledCells / totalCells);
+      const pillClass = filledCells === totalCells ? css.pillOk : css.pillNo;
+      html += '<p style="font-size:12px;color:#6b7280;margin:6px 0 0;">' +
+              '<span style="' + css.pill + ' ' + pillClass + '">' + filledCells + ' / ' + totalCells + ' filled (' + pct + '%)</span>' +
+              '</p>';
+    }
+  });
+
+  html += '<p style="' + css.foot + '">';
+  html += 'Dwell Kids Scheduler &middot; auto-sent every Tuesday at noon PT.<br>';
+  html += 'To stop, disable the <em>dwell-kids-tuesday-digest</em> task in Cowork.';
+  html += '</p></div>';
+  return html;
+}
+
+/**
+ * Format 'YYYY-MM-DD' as "Sun, May 17" for the digest table. Parses
+ * components manually to avoid the UTC off-by-one trap that bites
+ * server-side date string parsing.
+ */
+function formatDigestDate(ymd) {
+  const parts = ymd.split('-').map(Number);
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  return Utilities.formatDate(d, 'America/Los_Angeles', 'EEE, MMM d');
+}
+
+function escapeForHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// =====================================================================
+// Auth helper for write endpoints
+// =====================================================================
+//
+// Anything that creates PCO plans or sends email lives behind a token
+// stored in PropertiesService. The Cowork scheduled task carries the
+// token in its URL. If the token is wrong or missing, the request 403s.
+//
+// Generate the token once with:
+//   PropertiesService.getScriptProperties()
+//     .setProperty('DIGEST_TOKEN', Utilities.getUuid().replace(/-/g, ''));
+// and copy the value into the Cowork scheduled task. See DEPLOY.md.
+// =====================================================================
+
+function requireDigestToken(p) {
+  const expected = PropertiesService.getScriptProperties().getProperty('DIGEST_TOKEN');
+  if (!expected) {
+    throw new Error('DIGEST_TOKEN not configured — set it in Script Properties.');
+  }
+  if (!p || p.token !== expected) {
+    throw new Error('forbidden: bad or missing token');
+  }
+}
+
+/**
+ * One-time setup helper. Run this once from the Apps Script editor
+ * after pasting in the new Code.gs to mint a random DIGEST_TOKEN and
+ * store it in Script Properties. The token will print to the
+ * Execution log — copy it into the Cowork scheduled task URL.
+ *
+ * Safe to re-run: regenerates the token and prints the new value.
+ * Anyone using the old token (the Cowork task) will get `forbidden`
+ * until you update them.
+ */
+function setupDigestToken() {
+  const token = Utilities.getUuid().replace(/-/g, '');
+  PropertiesService.getScriptProperties().setProperty('DIGEST_TOKEN', token);
+  Logger.log('DIGEST_TOKEN = ' + token);
+  Logger.log('Copy that value into the Cowork scheduled task URL.');
+  return token;
 }

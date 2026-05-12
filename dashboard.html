@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Read-only view; still noindex to keep it off Google. -->
+  <meta name="robots" content="noindex, nofollow">
+  <title>Dwell Kids — Fill Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="assets/dwell-icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: #1f2937;
+      background: #ffffff;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #00cccc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+
+    /* Brand header — matches scheduler page */
+    .brand {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      gap: 4px; margin: 8px 0 24px;
+    }
+    .brand-icon { width: 88px; height: 88px; object-fit: contain; display: block; }
+    .brand-wordmark {
+      font-size: 36px; font-weight: 300; letter-spacing: 0.18em;
+      color: #111827; margin-top: 4px; padding-left: 0.18em;
+    }
+    .brand-tag {
+      font-family: "Permanent Marker", "Marker Felt", cursive;
+      font-size: 20px; color: #00cccc; letter-spacing: 0.04em; margin-top: -2px;
+    }
+    header h1 {
+      font-size: 24px; font-weight: 500; margin: 0 0 6px;
+      letter-spacing: -0.01em; text-align: center; color: #1f2937;
+    }
+    header .subtitle { color: #6b7280; margin: 0 0 24px; font-size: 14px; text-align: center; }
+
+    .toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; margin: 0 0 20px; flex-wrap: wrap;
+    }
+    .meta {
+      font-size: 12px; color: #9ca3af;
+    }
+    .refresh-btn {
+      padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 8px;
+      background: #fff; color: #1f2937; font-size: 13px; font-weight: 500;
+      cursor: pointer; font-family: inherit; transition: all 0.15s ease;
+    }
+    .refresh-btn:hover { border-color: #00cccc; background: #f0fdfd; }
+    .refresh-btn.spinning { opacity: 0.5; cursor: wait; }
+
+    .team-section { margin-bottom: 36px; }
+    .team-header {
+      display: flex; align-items: baseline; gap: 12px;
+      margin: 0 0 12px; padding-bottom: 8px;
+      border-bottom: 2px solid #00cccc;
+    }
+    .team-header h2 {
+      font-size: 18px; font-weight: 600; margin: 0; color: #111827;
+    }
+    .team-stats {
+      font-size: 13px; color: #6b7280;
+    }
+    .pill {
+      display: inline-block; padding: 2px 10px; border-radius: 12px;
+      font-size: 12px; font-weight: 500;
+    }
+    .pill.ok    { background: #dcfce7; color: #15803d; }
+    .pill.warn  { background: #fef3c7; color: #92400e; }
+    .pill.bad   { background: #fee2e2; color: #b91c1c; }
+    .pill.muted { background: #f3f4f6; color: #6b7280; }
+
+    /* Grid table */
+    .grid {
+      width: 100%; border-collapse: collapse;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+      overflow: hidden;
+    }
+    .grid th {
+      text-align: left; padding: 10px 14px;
+      background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+      font-size: 12px; font-weight: 600; color: #374151;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .grid td {
+      padding: 12px 14px; border-bottom: 1px solid #f3f4f6;
+      font-size: 14px; vertical-align: middle;
+    }
+    .grid tr:last-child td { border-bottom: none; }
+    .grid td.date {
+      font-weight: 500; color: #111827; white-space: nowrap;
+    }
+    .grid td.cell-filled  { color: #15803d; }
+    .grid td.cell-empty   { color: #b91c1c; font-weight: 500; }
+    .grid td.cell-noplan  { color: #9ca3af; font-style: italic; }
+    .grid tr.no-plan td.date  { color: #9ca3af; }
+    .grid tr.no-plan          { background: #fafafa; }
+
+    .empty-pill {
+      display: inline-block; padding: 2px 10px; border-radius: 10px;
+      background: #fee2e2; color: #b91c1c; font-size: 12px; font-weight: 500;
+    }
+    .noplan-pill {
+      display: inline-block; padding: 2px 10px; border-radius: 10px;
+      background: #f3f4f6; color: #6b7280; font-size: 12px;
+    }
+
+    .status-line { font-size: 13px; color: #6b7280; padding: 24px 0; text-align: center; }
+    .status-line.error { color: #b91c1c; }
+
+    footer {
+      text-align: center; color: #9ca3af; font-size: 13px;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid #e5e7eb;
+    }
+
+    @media (max-width: 600px) {
+      .grid th, .grid td { padding: 8px 10px; font-size: 13px; }
+      .grid th { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+
+  <main class="wrap">
+    <header>
+      <div class="brand">
+        <img class="brand-icon" src="assets/dwell-icon.png" alt="Dwell Church">
+        <div class="brand-wordmark">dwell</div>
+        <div class="brand-tag">KIDS</div>
+      </div>
+      <h1>Fill dashboard</h1>
+      <p class="subtitle">All upcoming Sundays for Toddlers and Elementary. Updated every Tuesday at noon (and on every page load).</p>
+    </header>
+
+    <div class="toolbar">
+      <div class="meta" id="meta">Loading&hellip;</div>
+      <button type="button" class="refresh-btn" id="refresh-btn">Refresh now</button>
+    </div>
+
+    <div id="content">
+      <div class="status-line">Loading schedule&hellip;</div>
+    </div>
+
+    <footer>
+      Dwell Church of the Peninsula &middot; kids fill dashboard
+      &middot; <a href="index.html">go to scheduler</a>
+    </footer>
+  </main>
+
+<script>
+/* =====================================================================
+ * CONFIG — same Apps Script URL as the scheduler page.
+ * ===================================================================== */
+const CONFIG = {
+  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbw3TNhTBLJZCKDfmJKhprbkCUDMAlAqG2HQX8PUuCKTxtaXNNWlWxJbr4Xqcg9qFKZpoQ/exec",
+  SCHEDULER_PAGE: "index.html",
+};
+
+const TEAM_LABELS = {
+  toddlers:   { title: 'Toddlers',   age: 'walking through age 2' },
+  elementary: { title: 'Elementary', age: 'K through 5th grade' },
+};
+
+/* =====================================================================
+ * Boot
+ * ===================================================================== */
+document.getElementById('refresh-btn').addEventListener('click', load);
+load();
+
+async function load() {
+  const btn = document.getElementById('refresh-btn');
+  const content = document.getElementById('content');
+  const meta = document.getElementById('meta');
+
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  content.innerHTML = '<div class="status-line">Loading schedule&hellip;</div>';
+
+  try {
+    const url = CONFIG.APPS_SCRIPT_URL + '?action=dashboard&_=' + Date.now();
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'unknown error');
+
+    render(data);
+    meta.textContent = 'Updated ' + new Date(data.generated_at).toLocaleString();
+  } catch (err) {
+    content.innerHTML = '<div class="status-line error">Couldn\'t load: ' + escapeHtml(err.message || String(err)) + '</div>';
+    meta.textContent = '';
+  } finally {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+  }
+}
+
+/* =====================================================================
+ * Render
+ * ===================================================================== */
+function render(data) {
+  const content = document.getElementById('content');
+  content.innerHTML = '';
+
+  // Render in a stable order (toddlers first, elementary second) so the
+  // page layout doesn't shuffle if PCO returns keys in different order.
+  const order = ['toddlers', 'elementary'];
+  order.forEach(key => {
+    if (!data.teams[key]) return;
+    content.appendChild(renderTeam(key, data.teams[key]));
+  });
+}
+
+function renderTeam(teamKey, team) {
+  const section = document.createElement('section');
+  section.className = 'team-section';
+
+  const label = TEAM_LABELS[teamKey] || { title: teamKey, age: '' };
+
+  // Header + stats
+  const header = document.createElement('div');
+  header.className = 'team-header';
+
+  const h2 = document.createElement('h2');
+  h2.textContent = label.title;
+  header.appendChild(h2);
+
+  const stats = document.createElement('div');
+  stats.className = 'team-stats';
+  stats.appendChild(buildStatsPill(team));
+  header.appendChild(stats);
+  section.appendChild(header);
+
+  if (team.error) {
+    const err = document.createElement('div');
+    err.className = 'status-line error';
+    err.textContent = "Couldn't load this team: " + team.error;
+    section.appendChild(err);
+    return section;
+  }
+
+  const sundays = team.sundays || [];
+  if (sundays.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'status-line';
+    empty.textContent = 'No upcoming Sundays found.';
+    section.appendChild(empty);
+    return section;
+  }
+
+  // Build the table; columns come from the first Sunday's slot keys.
+  const roleNames = Object.keys(sundays[0].slots || {});
+
+  const table = document.createElement('table');
+  table.className = 'grid';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  const dateHead = document.createElement('th');
+  dateHead.textContent = 'Sunday';
+  headRow.appendChild(dateHead);
+  roleNames.forEach(rn => {
+    const th = document.createElement('th');
+    th.textContent = rn;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  sundays.forEach(s => {
+    const tr = document.createElement('tr');
+    if (!s.plan_id) tr.classList.add('no-plan');
+
+    const dateTd = document.createElement('td');
+    dateTd.className = 'date';
+    dateTd.textContent = formatSundayDate(s.date);
+    tr.appendChild(dateTd);
+
+    roleNames.forEach(rn => {
+      const td = document.createElement('td');
+      const slot = (s.slots || {})[rn] || {};
+      if (!s.plan_id) {
+        td.className = 'cell-noplan';
+        const pill = document.createElement('span');
+        pill.className = 'noplan-pill';
+        pill.textContent = 'no plan yet';
+        td.appendChild(pill);
+      } else if (slot.filled_by) {
+        td.className = 'cell-filled';
+        td.textContent = slot.filled_by.short_name;
+      } else {
+        td.className = 'cell-empty';
+        const pill = document.createElement('a');
+        pill.className = 'empty-pill';
+        pill.href = CONFIG.SCHEDULER_PAGE + '?team=' + encodeURIComponent(teamKey);
+        pill.target = '_blank';
+        pill.rel = 'noopener';
+        pill.textContent = 'unfilled — click to schedule';
+        td.appendChild(pill);
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  section.appendChild(table);
+
+  return section;
+}
+
+function buildStatsPill(team) {
+  const sundays = (team.sundays || []).filter(s => s.plan_id);
+  if (sundays.length === 0) {
+    const span = document.createElement('span');
+    span.className = 'pill muted';
+    span.textContent = 'no published plans';
+    return span;
+  }
+  const roleNames = Object.keys(sundays[0].slots || {});
+  let total = 0, filled = 0;
+  sundays.forEach(s => {
+    roleNames.forEach(rn => {
+      total += 1;
+      if (s.slots[rn] && s.slots[rn].filled_by) filled += 1;
+    });
+  });
+  const pct = Math.round(100 * filled / Math.max(total, 1));
+  const span = document.createElement('span');
+  span.className = 'pill ' + (filled === total ? 'ok' : (pct >= 60 ? 'warn' : 'bad'));
+  span.textContent = filled + ' / ' + total + ' filled (' + pct + '%)';
+  return span;
+}
+
+/* =====================================================================
+ * Helpers
+ * ===================================================================== */
+function formatSundayDate(iso) {
+  // Parse YMD locally (not UTC) so May 17 doesn't render as May 16.
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric'
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
+}
+</script>
+</body>
+</html>

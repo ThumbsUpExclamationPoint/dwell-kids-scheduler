@@ -259,3 +259,111 @@ Version: New version → Deploy. The web app URL stays the same.
 
 **If you rotate the PCO token.** Re-do step 3 with the new App ID +
 Secret. No code change needed.
+
+---
+
+## 8. Dashboard, plan extender, and Tuesday digest (added 2026-05-12)
+
+Three new pieces ship alongside the scheduler:
+
+- **Dashboard** (`dashboard.html`) — read-only view of every upcoming
+  Sunday and which scheduler roles are filled, for both teams. Public
+  URL is the GitHub Pages site + `/dashboard.html`.
+- **Plan extender** (`extendPlans()` in `Code.gs`) — ensures a PCO Plan
+  exists for each of the next 8 Sundays. Missing Sundays get a new
+  Plan cloned from the most recent existing plan (title, series, and
+  needed_positions copied; no people copied).
+- **Tuesday digest** (`tuesdayDigest()` in `Code.gs`) — runs the
+  extender, then emails `matt@dwellpeninsula.com` a fill-status table.
+
+### 8a. Generate the write-endpoint token
+
+The extender and digest are gated behind a token so a random visitor
+can't trigger PCO writes or spam your inbox. To set it once:
+
+1. In the Apps Script editor, paste this into a new ad-hoc function
+   (or run from the Apps Script console) and click ▶ Run:
+   ```js
+   function setupDigestToken() {
+     const token = Utilities.getUuid().replace(/-/g, '');
+     PropertiesService.getScriptProperties().setProperty('DIGEST_TOKEN', token);
+     Logger.log('DIGEST_TOKEN = ' + token);
+   }
+   ```
+2. Copy the value from the Execution log. You'll paste it into the
+   Cowork scheduled task in step 8c.
+3. (You can also view/regenerate it later via Project Settings →
+   Script Properties.)
+
+### 8b. Redeploy the web app
+
+After pasting the updated `Code.gs`:
+
+1. **Deploy** → **Manage deployments** → ✏️ on the existing deployment.
+2. **Version**: New version. **Description**: `v2 — dashboard + extender`.
+3. **Deploy**.
+
+The web app URL stays the same. You don't need to update `index.html`
+or `dashboard.html`.
+
+Smoke-test the new endpoints in your browser:
+- `<URL>?action=dashboard` → should return JSON with `toddlers` and
+  `elementary` keys.
+- `<URL>?action=extendNow&token=<your DIGEST_TOKEN>` → should return
+  JSON with `created`, `skipped`, and `errors` arrays. Re-run it
+  immediately — `created` should be empty the second time (idempotent).
+- `<URL>?action=runDigest&token=<your DIGEST_TOKEN>` → should return
+  `{ ok: true, sent_to: "matt@dwellpeninsula.com" }` and you should
+  receive the email within ~30 seconds.
+
+### 8c. Wire up the Tuesday noon scheduled task in Cowork
+
+A Cowork scheduled task fires at noon PT every Tuesday and calls the
+`runDigest` endpoint via `web_fetch`. The task `dwell-kids-tuesday-digest`
+is created by Obi when the dashboard is first set up; if you need to
+update the URL or token later:
+
+1. Open Cowork → Scheduled tasks.
+2. Find `dwell-kids-tuesday-digest`.
+3. Edit the prompt — the URL with token is embedded inline.
+
+You can also click **Run now** on that task to trigger the digest
+on demand (useful for testing or for catching a missed Tuesday).
+
+### 8d. Push dashboard.html to GitHub Pages
+
+After updating the repo locally:
+
+```bash
+cd "Dwell Kids Scheduler"
+git add dashboard.html DEPLOY.md README.md apps-script/Code.gs
+git commit -m "Add dashboard, plan extender, Tuesday digest"
+git push
+```
+
+Pages will republish within ~30 seconds. The dashboard is then live at:
+`https://YOUR_USERNAME.github.io/dwell-kids-scheduler/dashboard.html`
+
+### 8e. Operational notes for the new pieces
+
+**If the digest email doesn't arrive Tuesday.** Check Apps Script →
+**Executions** for the `tuesdayDigest` run. If it didn't fire, check
+the Cowork task's run history. Most common cause: the token in the
+Cowork task URL doesn't match `DIGEST_TOKEN` in Script Properties
+(you'll see a `forbidden` error in Executions).
+
+**If the extender creates a duplicate plan.** Shouldn't happen
+(idempotency check is by `sort_date.substring(0,10)`), but if PCO
+returns a stale list and a duplicate sneaks through, delete the extra
+in PCO → Services → (service type) → click the plan → ⋮ → Delete.
+
+**If you want to change the 8-week horizon.** Edit
+`EXTENDER_HORIZON_SUNDAYS` near the top of the extender section in
+`Code.gs`, save, and redeploy. The dashboard and scheduler both
+follow `HORIZON_SUNDAYS` (the scheduler's own constant) — adjust both
+if you want them to match.
+
+**If you want to add a third kids service type.** Add an entry to
+`SERVICE_TYPES` and a matching `ROLES` row, then redeploy. The
+dashboard, extender, and digest will pick it up automatically — no
+other changes needed.

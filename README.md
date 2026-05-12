@@ -50,14 +50,40 @@ which dates are waiting on you.
 ```
 dwell-kids-scheduler/
 ├── index.html                  # public scheduler page (no login, no gate)
+├── dashboard.html              # read-only fill-status dashboard
 ├── assets/
 │   └── dwell-icon.png          # brand icon, lifted from the Interview Hub
 ├── apps-script/
-│   ├── Code.gs                 # PCO middleware (production)
+│   ├── Code.gs                 # PCO middleware: board, claim, dashboard,
+│   │                           #                  extender, Tuesday digest
 │   └── Introspect.gs           # one-time helpers to discover PCO IDs
 ├── DEPLOY.md                   # step-by-step setup (~15 min)
 └── README.md                   # this file
 ```
+
+## Dashboard, plan extender, Tuesday digest
+
+Three companion pieces ride alongside the scheduler:
+
+| Piece | What it does | Trigger |
+|-------|--------------|---------|
+| **Dashboard** (`dashboard.html`) | Read-only view of every upcoming Sunday and which scheduler roles are filled, across both teams. | Open the page — live data on every load. |
+| **Plan extender** (`extendPlans` in `Code.gs`) | Scans the next 8 Sundays in PCO; for any missing Sunday, creates a Plan cloned from the most recent existing plan (title, series_title, needed_positions). Idempotent. | Tuesday noon (auto) or `?action=extendNow&token=...` |
+| **Tuesday digest** | Runs the extender, then emails Matt a fill-status table. | Tuesday noon via Cowork scheduled task; manual via `?action=runDigest&token=...` |
+
+Endpoints exposed by the Apps Script web app:
+
+| Route | Auth | Purpose |
+|-------|------|---------|
+| `?action=ping` | none | health check |
+| `?action=board&team=toddlers\|elementary` | none | scheduler page data |
+| `?action=dashboard` | none | combined fill state, both teams |
+| `?action=claim` (POST) | none | claim a slot |
+| `?action=extendNow&token=...` | token | run the plan extender only |
+| `?action=runDigest&token=...` | token | extender + email digest |
+
+The token lives in Apps Script `PropertiesService` as `DIGEST_TOKEN`.
+See DEPLOY.md §8 for setup.
 
 ## How a claim works
 
