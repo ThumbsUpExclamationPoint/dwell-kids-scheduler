@@ -640,18 +640,28 @@ function getNeededPositions(stId, planId) {
 /**
  * Create a new Plan inside the given Service Type for a given Sunday.
  *
- * PCO API gotcha: `sort_date` and `dates` are read-only / computed —
- * passing them on create returns 422 "Forbidden Attribute". The actual
- * way to date a new plan is to first create the plan empty, then add
- * one or more `plan_times` whose starts_at falls on the target Sunday.
- * PCO derives sort_date from the earliest plan_time.
+ * PCO API gotcha #1: `sort_date` and `dates` are read-only — passing
+ * them on create returns 422 "Forbidden Attribute". PCO computes
+ * sort_date from the plan's plan_times.
  *
- * So this function does two writes:
- *   1. POST /plans              — empty plan (title/series cloned)
- *   2. POST /plan_times (per template time) — shifted to target Sunday
+ * PCO API gotcha #2 (v3 → v4 lesson): cloning the template plan's
+ * plan_times with a date shift looks correct but is brittle — the
+ * shift silently misfires on some service types (toddlers in our
+ * case), leaving the new plan without a sort_date. A dateless plan
+ * is invisible to `filter=future`, which causes the next extender
+ * run to think the date is missing and create a duplicate.
  *
- * If the template has no plan_times (cold-start), we add a single
- * default Sunday-morning service time so the plan still has a date.
+ * v4 approach: always set a fixed 10:00–11:30 PT Sunday service time
+ * on creation. Predictable, no template-shape dependencies. Matt can
+ * edit individual plan times in PCO if any date needs adjustment.
+ *
+ * Three writes per plan, with verification:
+ *   1. POST /plans                — empty plan (title/series cloned)
+ *   2. POST /plan_times           — Sunday 10:00 PT service time
+ *   3. GET  /plans/{id} (verify)  — confirm sort_date is set
+ * If step 3 finds no sort_date, the half-created plan is deleted so
+ * PCO stays clean, and the function throws a descriptive error that
+ * lands in the extender's `errors[]` list and the digest email.
  */
 function createPlanForDate(stId, dateYmd, template) {
   // ----- Step 1: create the plan (no date attrs) -----
@@ -669,59 +679,60 @@ function createPlanForDate(stId, dateYmd, template) {
   }
   const newPlanId = res.data.id;
 
-  // ----- Step 2: add plan_times on the target Sunday -----
-  // Pull the template plan's plan_times and emit a new plan_time per
-  // template entry shifted to the target Sunday, preserving time-of-day
-  // and timezone offset. Worst case (template has no times), we add
-  // a single Sunday 10:00 PT service time as a sensible default — Matt
-  // can edit the time in PCO later if needed.
-  let addedAny = false;
-  if (template && template.id) {
-    const templateTimes = getPlanTimes(stId, template.id);
-    templateTimes.forEach(pt => {
-      const a = pt.attributes || {};
-      const startsAt = shiftTimestampToDate(a.starts_at, dateYmd);
-      const endsAt   = a.ends_at ? shiftTimestampToDate(a.ends_at, dateYmd) : null;
-      const timeType = a.time_type || 'service';
-      try {
-        addPlanTime(stId, newPlanId, startsAt, endsAt, timeType);
-        addedAny = true;
-      } catch (err) {
-        console.warn('createPlanForDate: skipped a plan_time clone — ' + (err && err.message || err));
-      }
-    });
+  // ----- Step 2: add a fixed Sunday 10:00-11:30 PT service time -----
+  // -08:00 offset is winter-time; PCO normalizes to UTC server-side
+  // and the rendered time in PCO's UI is based on the user's timezone.
+  // PDT/PST drift is not our problem; the plan lands on the right
+  // Sunday in PT either way.
+  try {
+    addPlanTime(
+      stId,
+      newPlanId,
+      dateYmd + 'T10:00:00-08:00',
+      dateYmd + 'T11:30:00-08:00',
+      'service'
+    );
+  } catch (err) {
+    // If we can't add a plan_time, the plan is useless to us — clean it up.
+    safeDeletePlan(stId, newPlanId);
+    throw new Error('plan_time add failed for ' + dateYmd + ' — created plan ' + newPlanId + ' was rolled back: ' + (err && err.message || err));
   }
-  if (!addedAny) {
-    // Cold-start / no-template fallback: 10:00–11:30 Sunday morning PT.
-    // ISO with explicit -08:00 offset; PCO normalizes to UTC server-side.
-    // PT switches between -08 (PST) and -07 (PDT), but PCO doesn't care
-    // about our local DST — it stores absolute UTC and renders local in
-    // the UI based on the user's timezone.
-    try {
-      addPlanTime(
-        stId,
-        newPlanId,
-        dateYmd + 'T10:00:00-08:00',
-        dateYmd + 'T11:30:00-08:00',
-        'service'
-      );
-    } catch (err) {
-      console.warn('createPlanForDate: cold-start plan_time also failed — ' + (err && err.message || err));
-    }
+
+  // ----- Step 3: verify PCO computed sort_date from our plan_time -----
+  // A 500ms pause gives PCO a beat to propagate the plan_time into
+  // sort_date. Empirically PCO is usually instant, but we saw a case
+  // where toddlers plans showed up dateless without a brief wait.
+  Utilities.sleep(500);
+  const verify = pcoGet('/service_types/' + stId + '/plans/' + newPlanId);
+  const sortDate = verify && verify.data && verify.data.attributes && verify.data.attributes.sort_date;
+  if (!sortDate) {
+    // Plan exists but has no date — would create duplicates next run.
+    // Roll it back so PCO stays clean and the error surfaces clearly.
+    safeDeletePlan(stId, newPlanId);
+    throw new Error('plan ' + newPlanId + ' for ' + dateYmd + ' has no sort_date after plan_time create — rolled back; investigate in Apps Script Executions');
+  }
+  if (sortDate.substring(0, 10) !== dateYmd) {
+    // Plan landed on a different day than expected (unusual — should
+    // only happen if PCO's timezone interpretation differs from ours).
+    // Don't roll back, just log; the plan is real, just on a slightly
+    // off date.
+    console.warn('createPlanForDate: plan ' + newPlanId + ' landed on ' + sortDate.substring(0, 10) + ' instead of target ' + dateYmd);
   }
 
   return { id: newPlanId, attributes: res.data.attributes };
 }
 
 /**
- * List plan_times on a plan. Used by createPlanForDate to clone the
- * template's service-time pattern onto a new Sunday.
+ * Best-effort delete of a plan. Used to clean up after a half-created
+ * plan when we hit a downstream error. Swallows errors — we're already
+ * in an error path and the caller's exception is the one that matters.
  */
-function getPlanTimes(stId, planId) {
-  const res = pcoGet(
-    '/service_types/' + stId + '/plans/' + planId + '/plan_times?per_page=20'
-  );
-  return res.data || [];
+function safeDeletePlan(stId, planId) {
+  try {
+    pcoDelete('/service_types/' + stId + '/plans/' + planId);
+  } catch (err) {
+    console.warn('safeDeletePlan: failed to delete plan ' + planId + ': ' + (err && err.message || err));
+  }
 }
 
 /**
@@ -739,24 +750,6 @@ function addPlanTime(stId, planId, startsAt, endsAt, timeType) {
     '/service_types/' + stId + '/plans/' + planId + '/plan_times',
     { data: { type: 'PlanTime', attributes: attrs } }
   );
-}
-
-/**
- * Replace the date portion of an ISO timestamp with a new YYYY-MM-DD,
- * preserving the time-of-day and timezone offset. Used to take a
- * template plan_time like '2025-09-07T17:00:00Z' and produce a new one
- * on the target Sunday like '2026-06-28T17:00:00Z' — same wall-clock
- * service start, just on a different week.
- *
- * If parsing fails for any reason, falls back to 10:00 PT on the
- * target date so we never emit garbage.
- */
-function shiftTimestampToDate(isoTs, targetYmd) {
-  const fallback = targetYmd + 'T10:00:00-08:00';
-  if (!isoTs) return fallback;
-  const m = String(isoTs).match(/^\d{4}-\d{2}-\d{2}T(.+)$/);
-  if (!m) return fallback;
-  return targetYmd + 'T' + m[1];
 }
 
 /**
